@@ -42,8 +42,9 @@
 // (i.e., from the land side) are set to zero.
 //
 // COMPILATION:
-//    g++ -O3 -std=c++17 -Wall -Wextra -pedantic -Wconversion
-//        -Wsign-conversion -o transpose transpose.cpp
+//   g++ -O3 -fopenmp -march=native -std=c++17 -Wall -Wextra -pedantic 
+//       -Wconversion -Wsign-conversion -static -static-libgcc -static-libstdc++
+//       -o transpose transpose.cpp
 // --------------------------------------------------------------------
 
 #include <iostream>
@@ -443,7 +444,7 @@ int main(int argc, char *argv[])
 /*
 MIT License
 
-Copyright (c) 2025 Ricardo Carvalho
+Copyright (c) 2025 Author
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
