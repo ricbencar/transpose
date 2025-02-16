@@ -6,7 +6,7 @@
 This program processes wave data from an input CSV file, computes nearshore wave parameters at a specified depth, and generates:
 
 - **`output.csv`** – Contains the computed results.
-- **`report.txt`** – Provides descriptive statistics of both input and computed variables. The report is formatted so that three variables are shown side by side to make use of the full page width.
+- **`report.txt`** – Provides descriptive statistics of both input and computed variables.
 
 ---
 
