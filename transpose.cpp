@@ -6,8 +6,7 @@
 // nearshore wave parameters at a specified depth, and generates:
 //   - "output.csv" with the computed results
 //   - "report.txt" with descriptive statistics of both input and
-//     computed variables. The report is formatted so that three
-//     variables are shown side by side to make use of the full page width.
+//     computed variables.
 //
 // USAGE:
 //    ./transpose input_csv coast_dir depth_d
