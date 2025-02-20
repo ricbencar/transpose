@@ -8,6 +8,7 @@ This program processes wave data from an input CSV file, computes nearshore wave
 - **`output.csv`** – Contains the computed results.
 - **`report.txt`** – Provides descriptive statistics of both input and computed variables.
 
+For directional wave data (i.e. mwd_offshore and mwd_local), the program employs a hybrid approach: the circular mean and circular standard deviation are computed using the unit‑vector method, while the minimum, maximum, median, and quantiles are calculated using ordinary linear statistics on the wrapped angles (in the range [0,360)).
 ---
 
 ## USAGE
@@ -79,6 +80,16 @@ To compile the program, use the following command:
 ```sh
 g++ -O3 -fopenmp -march=native -std=c++17 -Wall -Wextra -pedantic -Wconversion -Wsign-conversion -static -static-libgcc -static-libstdc++ -o transpose transpose.cpp
 ```
+Compile Options Explained:
+
+    -O3: Enables high-level optimizations for maximum performance.
+    -fopenmp: Enables OpenMP support for multi-threading.
+    -march=native: Optimizes the code for the architecture of the compiling machine.
+    -std=c++17: Uses the C++17 standard.
+    -Wall -Wextra -pedantic: Activates a comprehensive set of compiler warnings to ensure code quality.
+    -Wconversion: Warns about implicit type conversions.
+    -Wsign-conversion: Warns about implicit sign conversions.
+    -static -static-libgcc -static-libstdc++: Links libraries statically to enhance portability.
 
 This command enables **optimizations** and includes several **compiler warnings** to ensure code quality.
 

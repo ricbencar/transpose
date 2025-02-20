@@ -1,52 +1,86 @@
 // --------------------------------------------------------------------
 // OFFSHORE-TO-NEARSHORE WAVE TRANSFORMATION
-// (Simplified Approach Using Linear Wave Theory)
+// (Simplified Approach Using Linear Wave Theory and Hybrid Circular Statistics)
 //
-// This program processes wave data from an input CSV file, computes
-// nearshore wave parameters at a specified depth, and generates:
-//   - "output.csv" with the computed results
-//   - "report.txt" with descriptive statistics of both input and
-//     computed variables, including the command line used, a listing
-//     of annual maxima of swh_offshore and swh_local (displayed in a
-//     table with side-by-side columns), with the last row showing the
-//     overall maxima of each variable, and statistics at the following
-//     percentiles: 1%, 10%, 25%, 50%, 75%, 90%, and 99%.
-// 
+// Overview:
+//   This program processes wave data from an input CSV file and computes
+//   nearshore wave parameters at a specified depth. It generates two output files:
+//     - "output.csv" – Contains the computed nearshore wave parameters.
+//     - "report.txt" – Provides descriptive statistics for both the input and
+//                      computed variables.
+//   The report includes:
+//     * The command line used to invoke the program.
+//     * Descriptive statistics for each variable (count, mean, standard deviation,
+//       minimum, maximum, median, and percentiles at 1%, 10%, 25%, 50%, 75%, 90%, 
+//       and 99%).
+//     * A table of annual maxima for swh_offshore and swh_local, with a final row
+//       indicating the overall maximum values.
+//
+//   For directional wave data (mwd_offshore and mwd_local), a hybrid approach is used:
+//     - The circular mean and circular standard deviation are computed using the
+//       unit-vector method.
+//     - The minimum, maximum, median, and quantiles are calculated using ordinary
+//       linear statistics on the wrapped angles (in [0,360)).
+//
 // USAGE:
-//    ./transpose input_csv coast_dir depth_d
-// where:
-//    input_csv : CSV input file (with columns: datetime, swh, mwd, pp1d)
-//    coast_dir : Coastline orientation in degrees (clockwise from North)
-//    depth_d   : Local depth (meters)
+//   ./transpose input_csv coast_dir depth_d
+//
+//   Where:
+//     input_csv : CSV input file containing at least the following columns:
+//                 datetime, swh, mwd, pp1d (additional columns are ignored)
+//     coast_dir : Coastline orientation in degrees (clockwise from North)
+//     depth_d   : Local depth in meters
 //
 // EXPECTED CSV INPUT FORMAT (comma-separated):
-//    datetime, swh, mwd, pp1d, [additional columns ignored]
+//     datetime, swh, mwd, pp1d, [additional columns ignored]
 //
 // OUTPUT CSV FORMAT (comma-separated):
-//    datetime,swh_offshore,mwd_offshore,pp1d,L0,L,kh,alpha_offshore,
-//    alpha_local,swh_local,mwd_local,Ks,Kr,Hb
+//     datetime,swh_offshore,mwd_offshore,pp1d,L0,L,kh,alpha_offshore,
+//     alpha_local,swh_local,mwd_local,Ks,Kr,Hb
 //
 // Explanation of computed parameters:
-//    L0             : Deep-water wavelength = g * T² / (2π)
-//    L              : Local wavelength, solved from
-//                     L = L0 * tanh((2π * depth_d) / L)
-//    kh             : Wave number (k) times local depth (h), k = 2π / L
-//    alpha_offshore : Offshore wave approach angle relative to coastline
-//    alpha_local    : Local wave angle after refraction
-//    mwd_local      : Local mean wave direction, adjusted from offshore mwd
-//    Ks             : Shoaling coefficient
-//    Kr             : Refraction coefficient
-//    Hb             : Breaking wave height (Miche, 1944):
-//                     Hb = 0.142 * L * tanh((2π * depth_d) / L)
-//    swh_local      : Local significant wave height (min of swh * Ks * Kr and Hb)
+//     L0             : Deep-water wavelength, calculated as (g * T²) / (2π)
+//     L              : Local wavelength, solved via Newton-Raphson from
+//                      L = L0 * tanh((2π * depth_d) / L)
+//     kh             : Product of the wave number (k = 2π / L) and local depth (h)
+//     alpha_offshore : Offshore wave approach angle relative to the coastline
+//     alpha_local    : Local wave angle after refraction
+//     mwd_local      : Local mean wave direction, adjusted from the offshore mwd
+//     Ks             : Shoaling coefficient
+//     Kr             : Refraction coefficient
+//     Hb             : Breaking wave height (per Miche, 1944), computed as
+//                      Hb = 0.142 * L * tanh((2π * depth_d) / L)
+//     swh_local      : Local significant wave height, computed as the minimum of
+//                      (swh * Ks * Kr) and Hb
 //
-// Waves arriving from directions between coast_dir and coast_dir+180°
-// (i.e., from the land side) are set to zero.
+//   Note: Waves arriving from directions between coast_dir and coast_dir+180°
+//         (i.e., from the land side) are set to zero.
 //
-// COMPILATION:
-//   g++ -O3 -fopenmp -march=native -std=c++17 -Wall -Wextra -pedantic 
-//       -Wconversion -Wsign-conversion -static -static-libgcc -static-libstdc++
-//       -o transpose transpose.cpp
+// Report File Details:
+//   The report.txt file includes:
+//     - The exact command line used to run the program.
+//     - Detailed descriptive statistics for each variable, including count,
+//       mean, standard deviation, minimum, maximum, median, and percentiles at
+//       1%, 10%, 25%, 50%, 75%, 90%, and 99%.
+//     - A table displaying the annual maxima for swh_offshore and swh_local,
+//       with the final row indicating the overall maximum values.
+//
+// Compilation Details:
+//   To compile the program, use the following command:
+//
+//     g++ -O3 -fopenmp -march=native -std=c++17 -Wall -Wextra -pedantic
+//         -Wconversion -Wsign-conversion -static -static-libgcc -static-libstdc++
+//         -o transpose transpose.cpp
+//
+//   Explanation of compile options:
+//     - -O3                   : Enables high-level optimizations for maximum performance.
+//     - -fopenmp              : Enables OpenMP support for multi-threading.
+//     - -march=native         : Optimizes the code for the architecture of the compiling machine.
+//     - -std=c++17            : Uses the C++17 standard.
+//     - -Wall -Wextra -pedantic: Activates a broad set of compiler warnings to ensure code quality.
+//     - -Wconversion          : Warns about implicit type conversions.
+//     - -Wsign-conversion     : Warns about implicit sign conversions.
+//     - -static, -static-libgcc, -static-libstdc++: Links libraries statically, enhancing portability.
 // --------------------------------------------------------------------
 
 #include <iostream>
@@ -162,8 +196,8 @@ long double shoalingCoefficient(long double k, long double depth)
 struct DescriptiveStats
 {
     size_t count;
-    long double mean;
-    long double stddev;
+    long double mean;    // For directional data, circular mean will be used
+    long double stddev;  // For directional data, circular std. dev. will be used
     long double min;
     long double p1;     // 1st percentile
     long double p10;    // 10th percentile
@@ -176,7 +210,7 @@ struct DescriptiveStats
 };
 
 // --------------------------------------------------------------------
-// Compute descriptive statistics.
+// Compute descriptive statistics (for linear data).
 // --------------------------------------------------------------------
 DescriptiveStats computeStats(const vector<long double> &data)
 {
@@ -206,13 +240,13 @@ DescriptiveStats computeStats(const vector<long double> &data)
 
     vector<long double> sortedData = data;
     sort(sortedData.begin(), sortedData.end());
-    auto getPercentile = [&](long double p) -> long double
-    {
+    auto getPercentile = [&](long double p) -> long double {
         long double pos = p * (sortedData.size() - 1);
         size_t idx = (size_t)floorl(pos);
         long double frac = pos - idx;
-        return (idx + 1 < sortedData.size()) ? sortedData[idx] * (1.0L - frac) + sortedData[idx + 1] * frac
-                                             : sortedData[idx];
+        return (idx + 1 < sortedData.size())
+            ? sortedData[idx] * (1.0L - frac) + sortedData[idx + 1] * frac
+            : sortedData[idx];
     };
     stats.p1     = getPercentile(0.01L);
     stats.p10    = getPercentile(0.10L);
@@ -222,6 +256,50 @@ DescriptiveStats computeStats(const vector<long double> &data)
     stats.p90    = getPercentile(0.90L);
     stats.p99    = getPercentile(0.99L);
     return stats;
+}
+
+// --------------------------------------------------------------------
+// Compute hybrid circular statistics for directional data.
+// For mwd_offshore and mwd_local, the unit-vector method is used
+// to compute the circular mean and standard deviation, ordinary (linear)
+// statistics are used on the "wrapped" angles (in [0,360)),
+// for min, max, median, and quantiles.
+// --------------------------------------------------------------------
+DescriptiveStats computeHybridCircularStats(const vector<long double> &data)
+{
+    // Wrap each angle into [0,360)
+    vector<long double> wrapped;
+    wrapped.reserve(data.size());
+    for (long double d : data) {
+        long double w = fmodl(d, 360.0L);
+        if (w < 0)
+            w += 360.0L;
+        wrapped.push_back(w);
+    }
+    
+    // Compute linear statistics on the wrapped values
+    DescriptiveStats linearStats = computeStats(wrapped);
+    
+    // Compute circular mean and circular standard deviation via unit-vector method.
+    long double sumSin = 0.0L, sumCos = 0.0L;
+    for (long double d : wrapped) {
+        long double rad = deg2rad(d);
+        sumSin += sinl(rad);
+        sumCos += cosl(rad);
+    }
+    long double meanRad = atan2l(sumSin, sumCos);
+    if (meanRad < 0)
+        meanRad += 2.0L * PI;
+    long double circMean = rad2deg(meanRad);
+    long double R = sqrtl((sumCos / wrapped.size()) * (sumCos / wrapped.size()) +
+                          (sumSin / wrapped.size()) * (sumSin / wrapped.size()));
+    long double circStd = (R < TOLERANCE) ? 180.0L : rad2deg(sqrtl(-2.0L * logl(R)));
+    
+    // Build the hybrid statistics: use circular mean and std. dev. and linear quantiles.
+    DescriptiveStats hybrid = linearStats;
+    hybrid.mean = circMean;
+    hybrid.stddev = circStd;
+    return hybrid;
 }
 
 // --------------------------------------------------------------------
@@ -375,7 +453,6 @@ int main(int argc, char *argv[])
         }
         
         // We update annual maximum only if datetime is at least 4 characters.
-        // (This update will occur in the valid branches below.)
         bool updateMaps = (datetime.size() >= 4);
 
         // Branch 1: Invalid numeric values
@@ -398,7 +475,7 @@ int main(int argc, char *argv[])
         // Branch 2: Waves arriving from the land side (relativeDir < 180)
         if (relativeDir < 180.0L)
         {
-            // swh_offshore equals swh; swh_local is set to 0.0 in this case.
+            // swh_offshore equals swh; swh_local is set to 0.0 in this branch.
             long double swh_local = 0.0L;
             outFile << datetime << "," << swh << "," << mwd << "," << pp1d;
             for (int i = 0; i < 9; i++)
@@ -501,8 +578,13 @@ int main(int argc, char *argv[])
             reportFile << left << setw(colWidth) << varNames[i + j];
         reportFile << "\n";
         vector<DescriptiveStats> groupStats;
-        for (size_t j = 0; j < VARIABLES_PER_ROW && (i + j) < NUM_COLS; ++j)
-            groupStats.push_back(computeStats(statsData[i + j]));
+        for (size_t j = 0; j < VARIABLES_PER_ROW && (i + j) < NUM_COLS; ++j) {
+            // For directional variables, use the hybrid method.
+            if (varNames[i + j] == "mwd_offshore" || varNames[i + j] == "mwd_local")
+                groupStats.push_back(computeHybridCircularStats(statsData[i + j]));
+            else
+                groupStats.push_back(computeStats(statsData[i + j]));
+        }
         // For each statistic, print the value for each variable
         for (const auto &label : statLabels)
         {
