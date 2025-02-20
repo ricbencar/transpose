@@ -6,8 +6,12 @@
 // nearshore wave parameters at a specified depth, and generates:
 //   - "output.csv" with the computed results
 //   - "report.txt" with descriptive statistics of both input and
-//     computed variables.
-//
+//     computed variables, including the command line used, a listing
+//     of annual maxima of swh_offshore and swh_local (displayed in a
+//     table with side-by-side columns), with the last row showing the
+//     overall maxima of each variable, and statistics at the following
+//     percentiles: 1%, 10%, 25%, 50%, 75%, 90%, and 99%.
+// 
 // USAGE:
 //    ./transpose input_csv coast_dir depth_d
 // where:
@@ -19,12 +23,11 @@
 //    datetime, swh, mwd, pp1d, [additional columns ignored]
 //
 // OUTPUT CSV FORMAT (comma-separated):
-//    datetime,swh_offshore,mwd_offshore,pp1d,L0,depth_d,L,kh,
-//    alpha_offshore,alpha_local,swh_local,mwd_local,Ks,Kr,Hb
+//    datetime,swh_offshore,mwd_offshore,pp1d,L0,L,kh,alpha_offshore,
+//    alpha_local,swh_local,mwd_local,Ks,Kr,Hb
 //
 // Explanation of computed parameters:
 //    L0             : Deep-water wavelength = g * T² / (2π)
-//    depth_d        : Local depth (input parameter echoed in output)
 //    L              : Local wavelength, solved from
 //                     L = L0 * tanh((2π * depth_d) / L)
 //    kh             : Wave number (k) times local depth (h), k = 2π / L
@@ -48,13 +51,15 @@
 
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <cmath>
 #include <vector>
 #include <algorithm>
-#include <iomanip> // For std::setprecision, std::setw, std::left
+#include <iomanip>   // For std::setprecision, std::setw, std::left
 #include <limits>
 #include <cstdlib>
+#include <map>
 
 using namespace std;
 
@@ -160,9 +165,13 @@ struct DescriptiveStats
     long double mean;
     long double stddev;
     long double min;
-    long double Q1;
-    long double median;
-    long double Q3;
+    long double p1;     // 1st percentile
+    long double p10;    // 10th percentile
+    long double p25;    // 25th percentile
+    long double median; // 50th percentile
+    long double p75;    // 75th percentile
+    long double p90;    // 90th percentile
+    long double p99;    // 99th percentile
     long double max;
 };
 
@@ -171,7 +180,7 @@ struct DescriptiveStats
 // --------------------------------------------------------------------
 DescriptiveStats computeStats(const vector<long double> &data)
 {
-    DescriptiveStats stats = {0, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L};
+    DescriptiveStats stats = {0, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L};
     if (data.empty())
         return stats;
     stats.count = data.size();
@@ -194,6 +203,7 @@ DescriptiveStats computeStats(const vector<long double> &data)
         variance += diff * diff;
     }
     stats.stddev = (stats.count > 1) ? sqrtl(variance / (stats.count - 1)) : 0.0L;
+
     vector<long double> sortedData = data;
     sort(sortedData.begin(), sortedData.end());
     auto getPercentile = [&](long double p) -> long double
@@ -204,9 +214,13 @@ DescriptiveStats computeStats(const vector<long double> &data)
         return (idx + 1 < sortedData.size()) ? sortedData[idx] * (1.0L - frac) + sortedData[idx + 1] * frac
                                              : sortedData[idx];
     };
-    stats.median = getPercentile(0.5L);
-    stats.Q1 = getPercentile(0.25L);
-    stats.Q3 = getPercentile(0.75L);
+    stats.p1     = getPercentile(0.01L);
+    stats.p10    = getPercentile(0.10L);
+    stats.p25    = getPercentile(0.25L);
+    stats.median = getPercentile(0.50L);
+    stats.p75    = getPercentile(0.75L);
+    stats.p90    = getPercentile(0.90L);
+    stats.p99    = getPercentile(0.99L);
     return stats;
 }
 
@@ -254,65 +268,99 @@ int main(int argc, char *argv[])
         cerr << "ERROR: unable to create output.csv\n";
         return 1;
     }
+    // Write output CSV header
     outFile << "datetime,"
             << "swh_offshore,mwd_offshore,pp1d,"
-            << "L0,depth_d,L,kh,alpha_offshore,alpha_local,"
+            << "L0,L,kh,alpha_offshore,alpha_local,"
             << "swh_local,mwd_local,Ks,Kr,Hb\n";
 
-    // Prepare arrays for statistical data
-    const size_t NUM_COLS = 14;
+    // Prepare arrays for statistical data (13 columns)
+    const size_t NUM_COLS = 13;
     vector<vector<long double>> statsData(NUM_COLS);
     vector<string> varNames = {
         "swh_offshore",   // 0
         "mwd_offshore",   // 1
         "pp1d",           // 2
         "L0",             // 3
-        "depth_d",        // 4
-        "L",              // 5
-        "kh",             // 6
-        "alpha_offshore", // 7
-        "alpha_local",    // 8
-        "swh_local",      // 9
-        "mwd_local",      // 10
-        "Ks",             // 11
-        "Kr",             // 12
-        "Hb"              // 13
+        "L",              // 4
+        "kh",             // 5
+        "alpha_offshore", // 6
+        "alpha_local",    // 7
+        "swh_local",      // 8
+        "mwd_local",      // 9
+        "Ks",             // 10
+        "Kr",             // 11
+        "Hb"              // 12
     };
     for (auto &col : statsData)
         col.reserve(1000000);
 
-    // Discard header of input CSV
+    // Maps to record annual maximum values for swh_offshore and swh_local.
+    map<string, long double> annualMaxOffshore;
+    map<string, long double> annualMaxLocal;
+
+    // Read and discard CSV header
     string header;
     getline(inFile, header);
 
-    // Use manual parsing via string::find (faster than istringstream)
+    // Read remaining lines into a vector
+    vector<string> lines;
     string line;
     while (getline(inFile, line))
     {
-        if (line.empty())
-            continue;
+        if (!line.empty())
+            lines.push_back(line);
+    }
+    inFile.close();
+
+    // Sort lines by datetime (first token) and remove duplicate datetime entries.
+    sort(lines.begin(), lines.end(), [](const string &a, const string &b) {
+        size_t posA = a.find(',');
+        size_t posB = b.find(',');
+        string dtA = (posA == string::npos) ? a : a.substr(0, posA);
+        string dtB = (posB == string::npos) ? b : b.substr(0, posB);
+        return dtA < dtB;
+    });
+    vector<string> uniqueLines;
+    for (const auto &l : lines)
+    {
+        size_t pos = l.find(',');
+        string dt = (pos == string::npos) ? l : l.substr(0, pos);
+        if (!uniqueLines.empty())
+        {
+            size_t posLast = uniqueLines.back().find(',');
+            string lastDt = (posLast == string::npos) ? uniqueLines.back() : uniqueLines.back().substr(0, posLast);
+            if (lastDt == dt)
+                continue; // duplicate found
+        }
+        uniqueLines.push_back(l);
+    }
+
+    // Process each unique line
+    for (const auto &l : uniqueLines)
+    {
         size_t pos = 0, next;
         // Parse datetime
-        next = line.find(',', pos);
+        next = l.find(',', pos);
         if (next == string::npos)
             continue;
-        string datetime = line.substr(pos, next - pos);
+        string datetime = l.substr(pos, next - pos);
         pos = next + 1;
-        // Parse swh
-        next = line.find(',', pos);
+        // Parse swh (this is swh_offshore)
+        next = l.find(',', pos);
         if (next == string::npos)
             continue;
-        string sSwh = line.substr(pos, next - pos);
+        string sSwh = l.substr(pos, next - pos);
         pos = next + 1;
         // Parse mwd
-        next = line.find(',', pos);
+        next = l.find(',', pos);
         if (next == string::npos)
             continue;
-        string sMwd = line.substr(pos, next - pos);
+        string sMwd = l.substr(pos, next - pos);
         pos = next + 1;
         // Parse pp1d
-        next = line.find(',', pos);
-        string sPp1d = (next == string::npos) ? line.substr(pos) : line.substr(pos, next - pos);
+        next = l.find(',', pos);
+        string sPp1d = (next == string::npos) ? l.substr(pos) : l.substr(pos, next - pos);
 
         long double swh, mwd, pp1d;
         try
@@ -323,29 +371,61 @@ int main(int argc, char *argv[])
         }
         catch (...)
         {
-            continue; // Skip lines with invalid numbers
+            continue; // Skip invalid numeric lines
         }
+        
+        // We update annual maximum only if datetime is at least 4 characters.
+        // (This update will occur in the valid branches below.)
+        bool updateMaps = (datetime.size() >= 4);
+
+        // Branch 1: Invalid numeric values
         if (swh <= 0.0L || pp1d <= 0.0L)
         {
             outFile << datetime << "," << swh << "," << mwd << "," << pp1d;
-            for (int i = 0; i < 11; i++)
+            for (int i = 0; i < 9; i++)
                 outFile << ",NaN";
             outFile << "\n";
-            continue;
-        }
-        long double relativeDir = fmodl((mwd - coast_dir) + 360.0L, 360.0L);
-        if (relativeDir < 180.0L)
-        {
-            outFile << datetime << "," << swh << "," << mwd << "," << pp1d;
-            for (int i = 0; i < 11; i++)
-                outFile << ",0.0";
-            outFile << "\n";
             vector<long double> record = {swh, mwd, pp1d, 0.0L, 0.0L, 0.0L, 0.0L,
-                                          0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L};
+                                           0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L};
             for (size_t i = 0; i < NUM_COLS; i++)
                 statsData[i].push_back(record[i]);
             continue;
         }
+
+        // Compute relative direction
+        long double relativeDir = fmodl((mwd - coast_dir) + 360.0L, 360.0L);
+
+        // Branch 2: Waves arriving from the land side (relativeDir < 180)
+        if (relativeDir < 180.0L)
+        {
+            // swh_offshore equals swh; swh_local is set to 0.0 in this case.
+            long double swh_local = 0.0L;
+            outFile << datetime << "," << swh << "," << mwd << "," << pp1d;
+            for (int i = 0; i < 9; i++)
+                outFile << ",0.0";
+            outFile << "\n";
+            vector<long double> record = {swh, mwd, pp1d, 0.0L, 0.0L, 0.0L, 0.0L,
+                                           0.0L, swh_local, 0.0L, 0.0L, 0.0L, 0.0L};
+            for (size_t i = 0; i < NUM_COLS; i++)
+                statsData[i].push_back(record[i]);
+            if (updateMaps)
+            {
+                string year = datetime.substr(0, 4);
+                // Update offshore maximum
+                if (annualMaxOffshore.find(year) == annualMaxOffshore.end())
+                    annualMaxOffshore[year] = swh;
+                else
+                    annualMaxOffshore[year] = max(annualMaxOffshore[year], swh);
+                // Update local maximum (0.0 in this branch)
+                if (annualMaxLocal.find(year) == annualMaxLocal.end())
+                    annualMaxLocal[year] = swh_local;
+                else
+                    annualMaxLocal[year] = max(annualMaxLocal[year], swh_local);
+            }
+            continue;
+        }
+
+        // Branch 3: Valid offshore wave case
         long double L0 = deepWaterLength(pp1d);
         long double L = localWavelength(pp1d, depth_d);
         long double kLocal = (L > 1e-12L) ? (2.0L * PI / L) : 0.0L;
@@ -367,21 +447,35 @@ int main(int argc, char *argv[])
         if (Hb > 0.0L && swh_local > Hb)
             swh_local = Hb;
         outFile << datetime << "," << swh << "," << mwd << "," << pp1d << ","
-                << L0 << "," << depth_d << "," << L << "," << kh << ","
+                << L0 << "," << L << "," << kh << ","
                 << alpha_offshore_deg << "," << alpha_local_deg << ","
                 << swh_local << "," << mwd_local << ","
                 << Ks << "," << Kr << "," << Hb << "\n";
-        vector<long double> record = {swh, mwd, pp1d, L0, depth_d, L, kh,
+        vector<long double> record = {swh, mwd, pp1d, L0, L, kh,
                                       alpha_offshore_deg, alpha_local_deg, swh_local,
                                       mwd_local, Ks, Kr, Hb};
         for (size_t i = 0; i < NUM_COLS; i++)
             statsData[i].push_back(record[i]);
+        if (updateMaps)
+        {
+            string year = datetime.substr(0, 4);
+            // Update offshore maximum (swh_offshore equals swh)
+            if (annualMaxOffshore.find(year) == annualMaxOffshore.end())
+                annualMaxOffshore[year] = swh;
+            else
+                annualMaxOffshore[year] = max(annualMaxOffshore[year], swh);
+            // Update local maximum
+            if (annualMaxLocal.find(year) == annualMaxLocal.end())
+                annualMaxLocal[year] = swh_local;
+            else
+                annualMaxLocal[year] = max(annualMaxLocal[year], swh_local);
+        }
     }
-    inFile.close();
     outFile.close();
 
     // ----------------------------------------------------------------
-    // Create report.txt with descriptive statistics in side-by-side format
+    // Create report.txt with descriptive statistics and the annual
+    // maxima table (for swh_offshore and swh_local) with overall maxima.
     // ----------------------------------------------------------------
     const int LINE_WIDTH = 100;                    // Total characters per line
     const int VARIABLES_PER_ROW = 3;               // Display 3 variables side by side
@@ -393,8 +487,13 @@ int main(int argc, char *argv[])
         cerr << "ERROR: unable to create report.txt\n";
         return 1;
     }
+    // Write the command line used at the start of the report file
+    reportFile << "Command line: " << argv[0] << " " << argv[1] << " " << argv[2] << " " << argv[3] << "\n\n";
     reportFile << "Descriptive Statistics Report\n";
     reportFile << string(LINE_WIDTH, '=') << "\n\n";
+
+    // Define the list of statistic labels for each variable.
+    vector<string> statLabels = {"Count", "Mean", "Std. Dev.", "Min", "P1", "P10", "P25", "Median", "P75", "P90", "P99", "Max"};
     for (size_t i = 0; i < NUM_COLS; i += VARIABLES_PER_ROW)
     {
         // Print variable names for this group
@@ -404,38 +503,69 @@ int main(int argc, char *argv[])
         vector<DescriptiveStats> groupStats;
         for (size_t j = 0; j < VARIABLES_PER_ROW && (i + j) < NUM_COLS; ++j)
             groupStats.push_back(computeStats(statsData[i + j]));
-        vector<string> statLabels = {"Count", "Mean", "Std. Dev.", "Min", "Q1", "Median", "Q3", "Max"};
-        for (size_t statIdx = 0; statIdx < statLabels.size(); ++statIdx)
+        // For each statistic, print the value for each variable
+        for (const auto &label : statLabels)
         {
             for (size_t j = 0; j < groupStats.size(); ++j)
             {
                 ostringstream oss;
-                if (statLabels[statIdx] == "Count")
-                    oss << statLabels[statIdx] << ": " << groupStats[j].count;
-                else
-                {
-                    oss << statLabels[statIdx] << ": " << fixed << setprecision(10);
-                    if (statLabels[statIdx] == "Mean")
-                        oss << groupStats[j].mean;
-                    else if (statLabels[statIdx] == "Std. Dev.")
-                        oss << groupStats[j].stddev;
-                    else if (statLabels[statIdx] == "Min")
-                        oss << groupStats[j].min;
-                    else if (statLabels[statIdx] == "Q1")
-                        oss << groupStats[j].Q1;
-                    else if (statLabels[statIdx] == "Median")
-                        oss << groupStats[j].median;
-                    else if (statLabels[statIdx] == "Q3")
-                        oss << groupStats[j].Q3;
-                    else if (statLabels[statIdx] == "Max")
-                        oss << groupStats[j].max;
-                }
+                if (label == "Count")
+                    oss << label << ": " << groupStats[j].count;
+                else if (label == "Mean")
+                    oss << label << ": " << fixed << setprecision(10) << groupStats[j].mean;
+                else if (label == "Std. Dev.")
+                    oss << label << ": " << fixed << setprecision(10) << groupStats[j].stddev;
+                else if (label == "Min")
+                    oss << label << ": " << fixed << setprecision(10) << groupStats[j].min;
+                else if (label == "P1")
+                    oss << label << ": " << fixed << setprecision(10) << groupStats[j].p1;
+                else if (label == "P10")
+                    oss << label << ": " << fixed << setprecision(10) << groupStats[j].p10;
+                else if (label == "P25")
+                    oss << label << ": " << fixed << setprecision(10) << groupStats[j].p25;
+                else if (label == "Median")
+                    oss << label << ": " << fixed << setprecision(10) << groupStats[j].median;
+                else if (label == "P75")
+                    oss << label << ": " << fixed << setprecision(10) << groupStats[j].p75;
+                else if (label == "P90")
+                    oss << label << ": " << fixed << setprecision(10) << groupStats[j].p90;
+                else if (label == "P99")
+                    oss << label << ": " << fixed << setprecision(10) << groupStats[j].p99;
+                else if (label == "Max")
+                    oss << label << ": " << fixed << setprecision(10) << groupStats[j].max;
                 reportFile << left << setw(colWidth) << oss.str();
             }
             reportFile << "\n";
         }
         reportFile << string(LINE_WIDTH, '-') << "\n";
     }
+    
+    // Append the Annual Maxima table for swh_offshore and swh_local.
+    reportFile << "\nAnnual Maxima of swh_offshore and swh_local:\n";
+    // Table header
+    int tableColWidth = 30;
+    reportFile << left << setw(tableColWidth) << "Year" 
+               << left << setw(tableColWidth) << "swh_offshore"
+               << left << setw(tableColWidth) << "swh_local" << "\n";
+    long double overallOffshore = 0.0L, overallLocal = 0.0L;
+    for (const auto &entry : annualMaxOffshore)
+    {
+        string year = entry.first;
+        long double offVal = entry.second;
+        long double localVal = 0.0L;
+        if (annualMaxLocal.find(year) != annualMaxLocal.end())
+            localVal = annualMaxLocal[year];
+        reportFile << left << setw(tableColWidth) << year
+                   << left << setw(tableColWidth) << offVal
+                   << left << setw(tableColWidth) << localVal << "\n";
+        overallOffshore = max(overallOffshore, offVal);
+        overallLocal = max(overallLocal, localVal);
+    }
+    // Overall maxima line
+    reportFile << left << setw(tableColWidth) << "Overall Max"
+               << left << setw(tableColWidth) << overallOffshore
+               << left << setw(tableColWidth) << overallLocal << "\n";
+    
     reportFile.close();
     return 0;
 }
@@ -443,7 +573,7 @@ int main(int argc, char *argv[])
 /*
 MIT License
 
-Copyright (c) 2025 Author
+Copyright (c) 2025 Ricardo Carvalho
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

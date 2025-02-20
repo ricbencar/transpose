@@ -38,7 +38,7 @@ datetime, swh, mwd, pp1d, [additional columns ignored]
 The generated `output.csv` will contain the following comma-separated columns:
 
 ```csv
-datetime,swh_offshore,mwd_offshore,pp1d,L0,depth_d,L,kh,alpha_offshore,alpha_local,swh_local,mwd_local,Ks,Kr,Hb
+datetime,swh_offshore,mwd_offshore,pp1d,L0,L,kh,alpha_offshore,alpha_local,swh_local,mwd_local,Ks,Kr,Hb
 ```
 
 ---
@@ -48,7 +48,6 @@ datetime,swh_offshore,mwd_offshore,pp1d,L0,depth_d,L,kh,alpha_offshore,alpha_loc
 | Parameter         | Description |
 |------------------|-------------|
 | **L0** | Deep-water wavelength: `L0 = g * T² / (2π)` |
-| **depth_d** | Local depth (input parameter echoed in output) |
 | **L** | Local wavelength, solved from `L = L0 * tanh((2π * depth_d) / L)` |
 | **kh** | Wave number (`k = 2π / L`) times local depth (`h`) |
 | **alpha_offshore** | Offshore wave approach angle relative to coastline |
@@ -60,6 +59,17 @@ datetime,swh_offshore,mwd_offshore,pp1d,L0,depth_d,L,kh,alpha_offshore,alpha_loc
 | **swh_local** | Local significant wave height (minimum of `swh * Ks * Kr` and `Hb`) |
 
 **Note:** Waves arriving from directions between `coast_dir` and `coast_dir + 180°` (i.e., from the land side) are set to **zero**.
+
+---
+
+## Report File Details
+
+The report.txt file provides:
+
+- **A descriptive statistics report for each output variable with additional percentiles at 1%, 10%, 25%, 50% (median), 75%, 90%, and 99%.
+- **An appended table displaying the annual maxima for swh_offshore and swh_local in side-by-side columns, with the final row indicating the overall maximum for each variable.
+- **An appended table displaying the annual maxima for swh_offshore and swh_local in side-by-side columns, with the final row indicating the overall maximum for each variable.
+The command line used to run the program at the top of the report.
 
 ---
 
