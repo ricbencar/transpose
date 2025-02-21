@@ -95,7 +95,7 @@
 #include <limits>
 #include <cstdlib>
 #include <map>
-#include <shared_mutex> // For shared_mutex
+#include <mutex>
 
 using namespace std;
 
@@ -126,8 +126,7 @@ inline long double rad2deg(long double rad)
 long double calcalpha_offshore_deg(long double mwd_deg, long double coast_deg)
 {
     long double crest = mwd_deg - 90.0L;
-    // Normalize crest to [0, 360)
-    crest = fmodl(crest + 360.0L, 360.0L);
+    crest = fmodl(crest + 360.0L, 360.0L); // normalize
     long double diff = fabsl(crest - coast_deg);
     diff = fmodl(diff, 360.0L);
     if (diff > 180.0L)
@@ -152,12 +151,10 @@ long double localWavelength(long double T, long double depth)
 {
     if (T <= 0.0L || depth <= 0.0L)
         return 0.0L;
-
     const long double L0 = deepWaterLength(T);
     long double k0 = (2.0L * PI * depth) / L0;
-    // Use a simple initial guess based on deep-water wavelength
+    // Use an initial guess based on empirical formula
     long double L = L0 * tanhl(sinhl(sqrt(k0))) / tanhl(T);
-
     for (int i = 0; i < MAX_ITER; ++i)
     {
         long double x = (2.0L * PI * depth) / L;
@@ -239,7 +236,6 @@ DescriptiveStats computeStats(const vector<long double> &data)
         variance += diff * diff;
     }
     stats.stddev = (stats.count > 1) ? sqrtl(variance / (stats.count - 1)) : 0.0L;
-
     vector<long double> sortedData = data;
     sort(sortedData.begin(), sortedData.end());
     auto getPercentile = [&](long double p) -> long double {
@@ -265,7 +261,6 @@ DescriptiveStats computeStats(const vector<long double> &data)
 // --------------------------------------------------------------------
 DescriptiveStats computeHybridCircularStats(const vector<long double> &data)
 {
-    // Wrap each angle into [0,360)
     vector<long double> wrapped;
     wrapped.reserve(data.size());
     for (long double d : data) {
@@ -274,11 +269,7 @@ DescriptiveStats computeHybridCircularStats(const vector<long double> &data)
             w += 360.0L;
         wrapped.push_back(w);
     }
-    
-    // Compute linear statistics on the wrapped values
     DescriptiveStats linearStats = computeStats(wrapped);
-    
-    // Compute circular mean and standard deviation via unit-vector method.
     long double sumSin = 0.0L, sumCos = 0.0L;
     for (long double d : wrapped) {
         long double rad = deg2rad(d);
@@ -292,8 +283,6 @@ DescriptiveStats computeHybridCircularStats(const vector<long double> &data)
     long double R = sqrtl((sumCos / wrapped.size()) * (sumCos / wrapped.size()) +
                           (sumSin / wrapped.size()) * (sumSin / wrapped.size()));
     long double circStd = (R < TOLERANCE) ? 180.0L : rad2deg(sqrtl(-2.0L * logl(R)));
-    
-    // Build the hybrid statistics
     DescriptiveStats hybrid = linearStats;
     hybrid.mean = circMean;
     hybrid.stddev = circStd;
@@ -307,7 +296,6 @@ int main(int argc, char *argv[])
 {
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
-
     if (argc != 4)
     {
         cerr << "Usage: " << argv[0] << " input_csv coast_dir depth_d\n"
@@ -316,31 +304,25 @@ int main(int argc, char *argv[])
     }
     string input_csv = argv[1];
     long double coast_dir, depth_d;
-    try
-    {
+    try {
         coast_dir = stold(argv[2]);
         depth_d = stold(argv[3]);
     }
-    catch (...)
-    {
+    catch (...) {
         cerr << "Error: cannot parse coast_dir or depth_d.\n";
         return 1;
     }
-    if (depth_d <= 0.0L)
-    {
+    if (depth_d <= 0.0L) {
         cerr << "Invalid depth value.\n";
         return 1;
     }
-
     ifstream inFile(input_csv);
-    if (!inFile.is_open())
-    {
+    if (!inFile.is_open()) {
         cerr << "ERROR: unable to open input file " << input_csv << "\n";
         return 1;
     }
     ofstream outFile("output.csv");
-    if (!outFile.is_open())
-    {
+    if (!outFile.is_open()) {
         cerr << "ERROR: unable to create output.csv\n";
         return 1;
     }
@@ -350,47 +332,23 @@ int main(int argc, char *argv[])
             << "L0,L,kh,alpha_offshore,alpha_local,"
             << "swh_local,mwd_local,Ks,Kr,Hb\n";
 
-    // Prepare arrays for statistical data (13 columns)
+    // Preallocate arrays for statistics (13 columns)
     const size_t NUM_COLS = 13;
-    vector<vector<long double>> statsData(NUM_COLS);
-    vector<string> varNames = {
-        "swh_offshore",   // 0
-        "mwd_offshore",   // 1
-        "pp1d",           // 2
-        "L0",             // 3
-        "L",              // 4
-        "kh",             // 5
-        "alpha_offshore", // 6
-        "alpha_local",    // 7
-        "swh_local",      // 8
-        "mwd_local",      // 9
-        "Ks",             // 10
-        "Kr",             // 11
-        "Hb"              // 12
-    };
-    for (auto &col : statsData)
-        col.reserve(1000000);
-
-    // Maps to record annual maximum values for swh_offshore and swh_local.
-    map<string, long double> annualMaxOffshore;
-    map<string, long double> annualMaxLocal;
-    std::shared_mutex mtx;  // Declare the mutex for thread-safe updates
+    vector<vector<long double>> statsData(NUM_COLS, vector<long double>());
+    // We'll resize these arrays after we know the number of valid lines.
 
     // Read and discard CSV header
     string header;
     getline(inFile, header);
-
     // Read remaining lines into a vector
     vector<string> lines;
-    string line;
-    while (getline(inFile, line))
-    {
+    string line;  // Declare the variable "line"
+    while(getline(inFile, line)) {
         if (!line.empty())
             lines.push_back(line);
     }
     inFile.close();
-
-    // Sort lines by datetime (first token) and remove duplicate datetime entries.
+    // Sort lines by datetime (first token) and remove duplicates.
     sort(lines.begin(), lines.end(), [](const string &a, const string &b) {
         size_t posA = a.find(',');
         size_t posB = b.find(',');
@@ -399,27 +357,35 @@ int main(int argc, char *argv[])
         return dtA < dtB;
     });
     vector<string> uniqueLines;
-    for (const auto &l : lines)
-    {
+    uniqueLines.reserve(lines.size());
+    for (const auto &l : lines) {
         size_t pos = l.find(',');
         string dt = (pos == string::npos) ? l : l.substr(0, pos);
-        if (!uniqueLines.empty())
-        {
+        if (!uniqueLines.empty()) {
             size_t posLast = uniqueLines.back().find(',');
             string lastDt = (posLast == string::npos) ? uniqueLines.back() : uniqueLines.back().substr(0, posLast);
             if (lastDt == dt)
-                continue; // duplicate found
+                continue;
         }
         uniqueLines.push_back(l);
     }
+    
+    // Preallocate output storage.
+    vector<string> outputLines(uniqueLines.size());
+    for (size_t j = 0; j < NUM_COLS; j++)
+        statsData[j].resize(uniqueLines.size(), 0.0L);
+
+    // Prepare thread-local annual maximum maps.
+    size_t numThreads = static_cast<size_t>(omp_get_max_threads());
+    vector< map<string, long double> > localAnnualMaxOffshore(numThreads);
+    vector< map<string, long double> > localAnnualMaxLocal(numThreads);
 
     // ----------------------------------------------------------------
-    // Process the unique lines using OpenMP in an ordered loop to guarantee
-    // that the output lines are written in sorted (datetime) order.
+    // Process the unique lines in parallel.
     // ----------------------------------------------------------------
-    #pragma omp parallel for ordered schedule(dynamic)
-    for (size_t i = 0; i < uniqueLines.size(); ++i)
-    {
+    #pragma omp parallel for schedule(static)
+    for (size_t i = 0; i < uniqueLines.size(); ++i) {
+        size_t tid = static_cast<size_t>(omp_get_thread_num());
         const auto &l = uniqueLines[i];
         size_t pos = 0, next;
         next = l.find(',');
@@ -439,92 +405,43 @@ int main(int argc, char *argv[])
         pos = next + 1;
         next = l.find(',', pos);
         string sPp1d = (next == string::npos) ? l.substr(pos) : l.substr(pos, next - pos);
-
         long double swh, mwd, pp1d;
-        try
-        {
+        try {
             swh = stold(sSwh);
             mwd = stold(sMwd);
             pp1d = stold(sPp1d);
+        } catch (...) {
+            continue; // skip invalid numeric lines
         }
-        catch (...)
-        {
-            continue; // Skip invalid numeric lines
-        }
-
         bool updateMaps = (datetime.size() >= 4);
-        string resultLine;
-
-        // Branch 1: Invalid numeric values
-        if (swh <= 0.0L || pp1d <= 0.0L)
-        {
-            ostringstream oss;
+        ostringstream oss;
+        vector<long double> record(NUM_COLS, 0.0L);
+        if (swh <= 0.0L || pp1d <= 0.0L) {
             oss << datetime << "," << swh << "," << mwd << "," << pp1d;
             for (int j = 0; j < 9; j++)
                 oss << ",NaN";
-            resultLine = oss.str();
-
-            vector<long double> record = {swh, mwd, pp1d, 0.0L, 0.0L, 0.0L, 0.0L,
-                                           0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L};
-            #pragma omp critical
-            {
-                for (size_t k = 0; k < NUM_COLS; k++)
-                    statsData[k].push_back(record[k]);
-            }
-            if (updateMaps)
-            {
+            record = {swh, mwd, pp1d, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L};
+            if (updateMaps) {
                 string year = datetime.substr(0, 4);
-                mtx.lock();
-                if (annualMaxOffshore.find(year) == annualMaxOffshore.end())
-                    annualMaxOffshore[year] = swh;
-                else
-                    annualMaxOffshore[year] = max(annualMaxOffshore[year], swh);
-                if (annualMaxLocal.find(year) == annualMaxLocal.end())
-                    annualMaxLocal[year] = 0.0L;
-                else
-                    annualMaxLocal[year] = max(annualMaxLocal[year], 0.0L);
-                mtx.unlock();
+                localAnnualMaxOffshore[tid][year] = max(localAnnualMaxOffshore[tid][year], swh);
+                localAnnualMaxLocal[tid][year] = max(localAnnualMaxLocal[tid][year], 0.0L);
             }
         }
-        else
-        {
-            // Compute relative direction
+        else {
             long double relativeDir = fmodl((mwd - coast_dir) + 360.0L, 360.0L);
-            // Branch 2: Waves arriving from the land side
-            if (relativeDir < 180.0L)
-            {
+            if (relativeDir < 180.0L) {
                 long double swh_local = 0.0L;
-                ostringstream oss;
                 oss << datetime << "," << swh << "," << mwd << "," << pp1d;
                 for (int j = 0; j < 9; j++)
                     oss << ",0.0";
-                resultLine = oss.str();
-
-                vector<long double> record = {swh, mwd, pp1d, 0.0L, 0.0L, 0.0L, 0.0L,
-                                               0.0L, swh_local, 0.0L, 0.0L, 0.0L, 0.0L};
-                #pragma omp critical
-                {
-                    for (size_t k = 0; k < NUM_COLS; k++)
-                        statsData[k].push_back(record[k]);
-                }
-                if (updateMaps)
-                {
+                record = {swh, mwd, pp1d, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L, swh_local, 0.0L, 0.0L, 0.0L, 0.0L};
+                if (updateMaps) {
                     string year = datetime.substr(0, 4);
-                    mtx.lock();
-                    if (annualMaxOffshore.find(year) == annualMaxOffshore.end())
-                        annualMaxOffshore[year] = swh;
-                    else
-                        annualMaxOffshore[year] = max(annualMaxOffshore[year], swh);
-                    if (annualMaxLocal.find(year) == annualMaxLocal.end())
-                        annualMaxLocal[year] = swh_local;
-                    else
-                        annualMaxLocal[year] = max(annualMaxLocal[year], swh_local);
-                    mtx.unlock();
+                    localAnnualMaxOffshore[tid][year] = max(localAnnualMaxOffshore[tid][year], swh);
+                    localAnnualMaxLocal[tid][year] = max(localAnnualMaxLocal[tid][year], swh_local);
                 }
             }
-            // Branch 3: Valid offshore wave case
-            else
-            {
+            else {
                 long double L0 = deepWaterLength(pp1d);
                 long double L = localWavelength(pp1d, depth_d);
                 long double kLocal = (L > 1e-12L) ? (2.0L * PI / L) : 0.0L;
@@ -545,86 +462,73 @@ int main(int argc, char *argv[])
                 long double swh_local = swh * Ks * Kr;
                 if (Hb > 0.0L && swh_local > Hb)
                     swh_local = Hb;
-                ostringstream oss;
                 oss << datetime << "," << swh << "," << mwd << "," << pp1d << ","
                     << L0 << "," << L << "," << kh << ","
                     << alpha_offshore_deg << "," << alpha_local_deg << ","
                     << swh_local << "," << mwd_local << ","
                     << Ks << "," << Kr << "," << Hb;
-                resultLine = oss.str();
-
-                vector<long double> record = {swh, mwd, pp1d, L0, L, kh,
-                                              alpha_offshore_deg, alpha_local_deg, swh_local,
-                                              mwd_local, Ks, Kr, Hb};
-                #pragma omp critical
-                {
-                    for (size_t k = 0; k < NUM_COLS; k++)
-                        statsData[k].push_back(record[k]);
-                }
-                if (updateMaps)
-                {
+                record = {swh, mwd, pp1d, L0, L, kh, alpha_offshore_deg,
+                          alpha_local_deg, swh_local, mwd_local, Ks, Kr, Hb};
+                if (updateMaps) {
                     string year = datetime.substr(0, 4);
-                    mtx.lock();
-                    if (annualMaxOffshore.find(year) == annualMaxOffshore.end())
-                        annualMaxOffshore[year] = swh;
-                    else
-                        annualMaxOffshore[year] = max(annualMaxOffshore[year], swh);
-                    if (annualMaxLocal.find(year) == annualMaxLocal.end())
-                        annualMaxLocal[year] = swh_local;
-                    else
-                        annualMaxLocal[year] = max(annualMaxLocal[year], swh_local);
-                    mtx.unlock();
+                    localAnnualMaxOffshore[tid][year] = max(localAnnualMaxOffshore[tid][year], swh);
+                    localAnnualMaxLocal[tid][year] = max(localAnnualMaxLocal[tid][year], swh_local);
                 }
             }
         }
-        // Write the computed CSV line in order (same order as sorted input).
-        #pragma omp ordered
-        {
-            outFile << resultLine << "\n";
-        }
+        outputLines[i] = oss.str();
+        for (size_t j = 0; j < NUM_COLS; j++)
+            statsData[j][i] = record[j];
+    } // end parallel for
+
+    // Merge thread-local annual maximum maps.
+    map<string, long double> annualMaxOffshore, annualMaxLocal;
+    for (size_t t = 0; t < numThreads; t++) {
+        for (const auto &p : localAnnualMaxOffshore[t])
+            annualMaxOffshore[p.first] = max(annualMaxOffshore[p.first], p.second);
+        for (const auto &p : localAnnualMaxLocal[t])
+            annualMaxLocal[p.first] = max(annualMaxLocal[p.first], p.second);
     }
+
+    // Write output lines sequentially.
+    for (const auto &s : outputLines)
+        outFile << s << "\n";
     outFile.close();
 
     // ----------------------------------------------------------------
-    // Create report.txt with descriptive statistics and the annual
-    // maxima table (for swh_offshore and swh_local) with overall maxima.
+    // Create report.txt with descriptive statistics and annual maxima.
     // ----------------------------------------------------------------
-    const int LINE_WIDTH = 100;                    // Total characters per line
-    const int VARIABLES_PER_ROW = 3;               // Display 3 variables side by side
-    int colWidth = LINE_WIDTH / VARIABLES_PER_ROW; // Width per variable
-
+    const int LINE_WIDTH = 100;
+    const int VARIABLES_PER_ROW = 3;
+    int colWidth = LINE_WIDTH / VARIABLES_PER_ROW;
     ofstream reportFile("report.txt");
-    if (!reportFile.is_open())
-    {
+    if (!reportFile.is_open()) {
         cerr << "ERROR: unable to create report.txt\n";
         return 1;
     }
-    // Write the command line used at the start of the report file
-    reportFile << "Command line: " << argv[0] << " " << argv[1] << " " << argv[2] << " " << argv[3] << "\n\n";
+    reportFile << "Command line: " << argv[0] << " " << argv[1] << " " 
+               << argv[2] << " " << argv[3] << "\n\n";
     reportFile << "Descriptive Statistics Report\n";
     reportFile << string(LINE_WIDTH, '=') << "\n\n";
-
-    // Define the list of statistic labels for each variable.
-    vector<string> statLabels = {"Count", "Mean", "Std. Dev.", "Min", "P1", "P10", "P25", "Median", "P75", "P90", "P99", "Max"};
-    for (size_t i = 0; i < NUM_COLS; i += VARIABLES_PER_ROW)
-    {
-        // Print variable names for this group
+    vector<string> varNames = {
+        "swh_offshore", "mwd_offshore", "pp1d", "L0", "L", "kh",
+        "alpha_offshore", "alpha_local", "swh_local", "mwd_local", "Ks", "Kr", "Hb"
+    };
+    vector<string> statLabels = {"Count", "Mean", "Std. Dev.", "Min", "P1", "P10", "P25",
+                                 "Median", "P75", "P90", "P99", "Max"};
+    for (size_t i = 0; i < NUM_COLS; i += VARIABLES_PER_ROW) {
         for (size_t j = 0; j < VARIABLES_PER_ROW && (i + j) < NUM_COLS; ++j)
             reportFile << left << setw(colWidth) << varNames[i + j];
         reportFile << "\n";
         vector<DescriptiveStats> groupStats;
         for (size_t j = 0; j < VARIABLES_PER_ROW && (i + j) < NUM_COLS; ++j) {
-            // For directional variables, use the hybrid method.
             if (varNames[i + j] == "mwd_offshore" || varNames[i + j] == "mwd_local")
                 groupStats.push_back(computeHybridCircularStats(statsData[i + j]));
             else
                 groupStats.push_back(computeStats(statsData[i + j]));
         }
-        // For each statistic, print the value for each variable
-        for (const auto &label : statLabels)
-        {
-            for (size_t j = 0; j < groupStats.size(); ++j)
-            {
+        for (const auto &label : statLabels) {
+            for (size_t j = 0; j < groupStats.size(); ++j) {
                 ostringstream oss;
                 if (label == "Count")
                     oss << label << ": " << groupStats[j].count;
@@ -657,16 +561,14 @@ int main(int argc, char *argv[])
         reportFile << string(LINE_WIDTH, '-') << "\n";
     }
     
-    // Append the Annual Maxima table for swh_offshore and swh_local.
+    // Annual Maxima table.
     reportFile << "\nAnnual Maxima of swh_offshore and swh_local:\n";
-    // Table header
     int tableColWidth = 30;
     reportFile << left << setw(tableColWidth) << "Year" 
                << left << setw(tableColWidth) << "swh_offshore"
                << left << setw(tableColWidth) << "swh_local" << "\n";
     long double overallOffshore = 0.0L, overallLocal = 0.0L;
-    for (const auto &entry : annualMaxOffshore)
-    {
+    for (const auto &entry : annualMaxOffshore) {
         string year = entry.first;
         long double offVal = entry.second;
         long double localVal = 0.0L;
@@ -678,7 +580,6 @@ int main(int argc, char *argv[])
         overallOffshore = max(overallOffshore, offVal);
         overallLocal = max(overallLocal, localVal);
     }
-    // Overall maxima line
     reportFile << left << setw(tableColWidth) << "Overall Max"
                << left << setw(tableColWidth) << overallOffshore
                << left << setw(tableColWidth) << overallLocal << "\n";
@@ -686,17 +587,3 @@ int main(int argc, char *argv[])
     reportFile.close();
     return 0;
 }
-
-/*
-MIT License
-
-Copyright (c) 2025 Author
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is furnished
-to do so, subject to the following conditions:
-...
-*/
