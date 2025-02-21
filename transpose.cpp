@@ -1,6 +1,6 @@
 // --------------------------------------------------------------------
 // OFFSHORE-TO-NEARSHORE WAVE TRANSFORMATION
-// (Simplified Approach Using Linear Wave Theory and Hybrid Circular Statistics)
+// (Simplified Approach Using Linear Wave Theory)
 //
 // Overview:
 //   This program processes wave data from an input CSV file and computes
@@ -83,6 +83,7 @@
 //     - -static, -static-libgcc, -static-libstdc++: Links libraries statically, enhancing portability.
 // --------------------------------------------------------------------
 
+#include <omp.h>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -90,10 +91,11 @@
 #include <cmath>
 #include <vector>
 #include <algorithm>
-#include <iomanip>   // For std::setprecision, std::setw, std::left
+#include <iomanip>
 #include <limits>
 #include <cstdlib>
 #include <map>
+#include <shared_mutex> // For shared_mutex
 
 using namespace std;
 
@@ -260,10 +262,6 @@ DescriptiveStats computeStats(const vector<long double> &data)
 
 // --------------------------------------------------------------------
 // Compute hybrid circular statistics for directional data.
-// For mwd_offshore and mwd_local, the unit-vector method is used
-// to compute the circular mean and standard deviation, ordinary (linear)
-// statistics are used on the "wrapped" angles (in [0,360)),
-// for min, max, median, and quantiles.
 // --------------------------------------------------------------------
 DescriptiveStats computeHybridCircularStats(const vector<long double> &data)
 {
@@ -280,7 +278,7 @@ DescriptiveStats computeHybridCircularStats(const vector<long double> &data)
     // Compute linear statistics on the wrapped values
     DescriptiveStats linearStats = computeStats(wrapped);
     
-    // Compute circular mean and circular standard deviation via unit-vector method.
+    // Compute circular mean and standard deviation via unit-vector method.
     long double sumSin = 0.0L, sumCos = 0.0L;
     for (long double d : wrapped) {
         long double rad = deg2rad(d);
@@ -295,7 +293,7 @@ DescriptiveStats computeHybridCircularStats(const vector<long double> &data)
                           (sumSin / wrapped.size()) * (sumSin / wrapped.size()));
     long double circStd = (R < TOLERANCE) ? 180.0L : rad2deg(sqrtl(-2.0L * logl(R)));
     
-    // Build the hybrid statistics: use circular mean and std. dev. and linear quantiles.
+    // Build the hybrid statistics
     DescriptiveStats hybrid = linearStats;
     hybrid.mean = circMean;
     hybrid.stddev = circStd;
@@ -376,6 +374,7 @@ int main(int argc, char *argv[])
     // Maps to record annual maximum values for swh_offshore and swh_local.
     map<string, long double> annualMaxOffshore;
     map<string, long double> annualMaxLocal;
+    std::shared_mutex mtx;  // Declare the mutex for thread-safe updates
 
     // Read and discard CSV header
     string header;
@@ -414,29 +413,30 @@ int main(int argc, char *argv[])
         uniqueLines.push_back(l);
     }
 
-    // Process each unique line
-    for (const auto &l : uniqueLines)
+    // ----------------------------------------------------------------
+    // Process the unique lines using OpenMP in an ordered loop to guarantee
+    // that the output lines are written in sorted (datetime) order.
+    // ----------------------------------------------------------------
+    #pragma omp parallel for ordered schedule(dynamic)
+    for (size_t i = 0; i < uniqueLines.size(); ++i)
     {
+        const auto &l = uniqueLines[i];
         size_t pos = 0, next;
-        // Parse datetime
-        next = l.find(',', pos);
+        next = l.find(',');
         if (next == string::npos)
             continue;
         string datetime = l.substr(pos, next - pos);
         pos = next + 1;
-        // Parse swh (this is swh_offshore)
         next = l.find(',', pos);
         if (next == string::npos)
             continue;
         string sSwh = l.substr(pos, next - pos);
         pos = next + 1;
-        // Parse mwd
         next = l.find(',', pos);
         if (next == string::npos)
             continue;
         string sMwd = l.substr(pos, next - pos);
         pos = next + 1;
-        // Parse pp1d
         next = l.find(',', pos);
         string sPp1d = (next == string::npos) ? l.substr(pos) : l.substr(pos, next - pos);
 
@@ -451,101 +451,136 @@ int main(int argc, char *argv[])
         {
             continue; // Skip invalid numeric lines
         }
-        
-        // We update annual maximum only if datetime is at least 4 characters.
+
         bool updateMaps = (datetime.size() >= 4);
+        string resultLine;
 
         // Branch 1: Invalid numeric values
         if (swh <= 0.0L || pp1d <= 0.0L)
         {
-            outFile << datetime << "," << swh << "," << mwd << "," << pp1d;
-            for (int i = 0; i < 9; i++)
-                outFile << ",NaN";
-            outFile << "\n";
+            ostringstream oss;
+            oss << datetime << "," << swh << "," << mwd << "," << pp1d;
+            for (int j = 0; j < 9; j++)
+                oss << ",NaN";
+            resultLine = oss.str();
+
             vector<long double> record = {swh, mwd, pp1d, 0.0L, 0.0L, 0.0L, 0.0L,
                                            0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L};
-            for (size_t i = 0; i < NUM_COLS; i++)
-                statsData[i].push_back(record[i]);
-            continue;
-        }
-
-        // Compute relative direction
-        long double relativeDir = fmodl((mwd - coast_dir) + 360.0L, 360.0L);
-
-        // Branch 2: Waves arriving from the land side (relativeDir < 180)
-        if (relativeDir < 180.0L)
-        {
-            // swh_offshore equals swh; swh_local is set to 0.0 in this branch.
-            long double swh_local = 0.0L;
-            outFile << datetime << "," << swh << "," << mwd << "," << pp1d;
-            for (int i = 0; i < 9; i++)
-                outFile << ",0.0";
-            outFile << "\n";
-            vector<long double> record = {swh, mwd, pp1d, 0.0L, 0.0L, 0.0L, 0.0L,
-                                           0.0L, swh_local, 0.0L, 0.0L, 0.0L, 0.0L};
-            for (size_t i = 0; i < NUM_COLS; i++)
-                statsData[i].push_back(record[i]);
+            #pragma omp critical
+            {
+                for (size_t k = 0; k < NUM_COLS; k++)
+                    statsData[k].push_back(record[k]);
+            }
             if (updateMaps)
             {
                 string year = datetime.substr(0, 4);
-                // Update offshore maximum
+                mtx.lock();
                 if (annualMaxOffshore.find(year) == annualMaxOffshore.end())
                     annualMaxOffshore[year] = swh;
                 else
                     annualMaxOffshore[year] = max(annualMaxOffshore[year], swh);
-                // Update local maximum (0.0 in this branch)
                 if (annualMaxLocal.find(year) == annualMaxLocal.end())
-                    annualMaxLocal[year] = swh_local;
+                    annualMaxLocal[year] = 0.0L;
                 else
-                    annualMaxLocal[year] = max(annualMaxLocal[year], swh_local);
+                    annualMaxLocal[year] = max(annualMaxLocal[year], 0.0L);
+                mtx.unlock();
             }
-            continue;
         }
-
-        // Branch 3: Valid offshore wave case
-        long double L0 = deepWaterLength(pp1d);
-        long double L = localWavelength(pp1d, depth_d);
-        long double kLocal = (L > 1e-12L) ? (2.0L * PI / L) : 0.0L;
-        long double kh = kLocal * depth_d;
-        long double alpha_offshore_deg = calcalpha_offshore_deg(mwd, coast_dir);
-        long double alpha_offshore_rad = deg2rad(alpha_offshore_deg);
-        long double sinAlpha = sinl(alpha_offshore_rad) * tanhl(kh);
-        if (fabsl(sinAlpha) > 1.0L)
-            sinAlpha = (sinAlpha > 0.0L ? 1.0L : -1.0L);
-        long double alpha_local_rad = asinl(sinAlpha);
-        long double alpha_local_deg = rad2deg(alpha_local_rad);
-        long double mwd_local = fmodl(mwd - (alpha_offshore_deg - alpha_local_deg) + 360.0L, 360.0L);
-        long double Ks = shoalingCoefficient(kLocal, depth_d);
-        long double cosalpha_offshore = cosl(alpha_offshore_rad);
-        long double cosAlphaLocal = cosl(alpha_local_rad);
-        long double Kr = (fabsl(cosAlphaLocal) > 1e-12L) ? sqrtl(cosalpha_offshore / cosAlphaLocal) : 1.0L;
-        long double Hb = (L > 1e-12L) ? 0.142L * L * tanhl((2.0L * PI * depth_d) / L) : 0.0L;
-        long double swh_local = swh * Ks * Kr;
-        if (Hb > 0.0L && swh_local > Hb)
-            swh_local = Hb;
-        outFile << datetime << "," << swh << "," << mwd << "," << pp1d << ","
-                << L0 << "," << L << "," << kh << ","
-                << alpha_offshore_deg << "," << alpha_local_deg << ","
-                << swh_local << "," << mwd_local << ","
-                << Ks << "," << Kr << "," << Hb << "\n";
-        vector<long double> record = {swh, mwd, pp1d, L0, L, kh,
-                                      alpha_offshore_deg, alpha_local_deg, swh_local,
-                                      mwd_local, Ks, Kr, Hb};
-        for (size_t i = 0; i < NUM_COLS; i++)
-            statsData[i].push_back(record[i]);
-        if (updateMaps)
+        else
         {
-            string year = datetime.substr(0, 4);
-            // Update offshore maximum (swh_offshore equals swh)
-            if (annualMaxOffshore.find(year) == annualMaxOffshore.end())
-                annualMaxOffshore[year] = swh;
+            // Compute relative direction
+            long double relativeDir = fmodl((mwd - coast_dir) + 360.0L, 360.0L);
+            // Branch 2: Waves arriving from the land side
+            if (relativeDir < 180.0L)
+            {
+                long double swh_local = 0.0L;
+                ostringstream oss;
+                oss << datetime << "," << swh << "," << mwd << "," << pp1d;
+                for (int j = 0; j < 9; j++)
+                    oss << ",0.0";
+                resultLine = oss.str();
+
+                vector<long double> record = {swh, mwd, pp1d, 0.0L, 0.0L, 0.0L, 0.0L,
+                                               0.0L, swh_local, 0.0L, 0.0L, 0.0L, 0.0L};
+                #pragma omp critical
+                {
+                    for (size_t k = 0; k < NUM_COLS; k++)
+                        statsData[k].push_back(record[k]);
+                }
+                if (updateMaps)
+                {
+                    string year = datetime.substr(0, 4);
+                    mtx.lock();
+                    if (annualMaxOffshore.find(year) == annualMaxOffshore.end())
+                        annualMaxOffshore[year] = swh;
+                    else
+                        annualMaxOffshore[year] = max(annualMaxOffshore[year], swh);
+                    if (annualMaxLocal.find(year) == annualMaxLocal.end())
+                        annualMaxLocal[year] = swh_local;
+                    else
+                        annualMaxLocal[year] = max(annualMaxLocal[year], swh_local);
+                    mtx.unlock();
+                }
+            }
+            // Branch 3: Valid offshore wave case
             else
-                annualMaxOffshore[year] = max(annualMaxOffshore[year], swh);
-            // Update local maximum
-            if (annualMaxLocal.find(year) == annualMaxLocal.end())
-                annualMaxLocal[year] = swh_local;
-            else
-                annualMaxLocal[year] = max(annualMaxLocal[year], swh_local);
+            {
+                long double L0 = deepWaterLength(pp1d);
+                long double L = localWavelength(pp1d, depth_d);
+                long double kLocal = (L > 1e-12L) ? (2.0L * PI / L) : 0.0L;
+                long double kh = kLocal * depth_d;
+                long double alpha_offshore_deg = calcalpha_offshore_deg(mwd, coast_dir);
+                long double alpha_offshore_rad = deg2rad(alpha_offshore_deg);
+                long double sinAlpha = sinl(alpha_offshore_rad) * tanhl(kh);
+                if (fabsl(sinAlpha) > 1.0L)
+                    sinAlpha = (sinAlpha > 0.0L ? 1.0L : -1.0L);
+                long double alpha_local_rad = asinl(sinAlpha);
+                long double alpha_local_deg = rad2deg(alpha_local_rad);
+                long double mwd_local = fmodl(mwd - (alpha_offshore_deg - alpha_local_deg) + 360.0L, 360.0L);
+                long double Ks = shoalingCoefficient(kLocal, depth_d);
+                long double cosalpha_offshore = cosl(alpha_offshore_rad);
+                long double cosAlphaLocal = cosl(alpha_local_rad);
+                long double Kr = (fabsl(cosAlphaLocal) > 1e-12L) ? sqrtl(cosalpha_offshore / cosAlphaLocal) : 1.0L;
+                long double Hb = (L > 1e-12L) ? 0.142L * L * tanhl((2.0L * PI * depth_d) / L) : 0.0L;
+                long double swh_local = swh * Ks * Kr;
+                if (Hb > 0.0L && swh_local > Hb)
+                    swh_local = Hb;
+                ostringstream oss;
+                oss << datetime << "," << swh << "," << mwd << "," << pp1d << ","
+                    << L0 << "," << L << "," << kh << ","
+                    << alpha_offshore_deg << "," << alpha_local_deg << ","
+                    << swh_local << "," << mwd_local << ","
+                    << Ks << "," << Kr << "," << Hb;
+                resultLine = oss.str();
+
+                vector<long double> record = {swh, mwd, pp1d, L0, L, kh,
+                                              alpha_offshore_deg, alpha_local_deg, swh_local,
+                                              mwd_local, Ks, Kr, Hb};
+                #pragma omp critical
+                {
+                    for (size_t k = 0; k < NUM_COLS; k++)
+                        statsData[k].push_back(record[k]);
+                }
+                if (updateMaps)
+                {
+                    string year = datetime.substr(0, 4);
+                    mtx.lock();
+                    if (annualMaxOffshore.find(year) == annualMaxOffshore.end())
+                        annualMaxOffshore[year] = swh;
+                    else
+                        annualMaxOffshore[year] = max(annualMaxOffshore[year], swh);
+                    if (annualMaxLocal.find(year) == annualMaxLocal.end())
+                        annualMaxLocal[year] = swh_local;
+                    else
+                        annualMaxLocal[year] = max(annualMaxLocal[year], swh_local);
+                    mtx.unlock();
+                }
+            }
+        }
+        // Write the computed CSV line in order (same order as sorted input).
+        #pragma omp ordered
+        {
+            outFile << resultLine << "\n";
         }
     }
     outFile.close();
@@ -663,15 +698,5 @@ in the Software without restriction, including without limitation the rights
 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is furnished
 to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
+...
 */
