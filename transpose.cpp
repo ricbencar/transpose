@@ -1,6 +1,6 @@
 // --------------------------------------------------------------------
 // OFFSHORE-TO-NEARSHORE WAVE TRANSFORMATION
-// (Simplified Approach Using Linear Wave Theory)
+// (Enhanced Approach Incorporating Wave Obliquity and Refraction)
 //
 // Overview:
 //   This program processes wave data from an input CSV file and computes
@@ -9,10 +9,10 @@
 //     - "report.txt" – Provides descriptive statistics for both the input and
 //                      computed variables.
 //   The report includes:
-//     * The command line used to invoke the program.
-//     * Descriptive statistics for each variable (count, mean, standard deviation,
-//       minimum, maximum, median, and percentiles at 1%, 10%, 25%, 50%, 75%, 90%, 
-//       and 99%).
+//     * The exact command line used to invoke the program.
+//     * Detailed descriptive statistics for each variable (count, mean, standard
+//       deviation, minimum, maximum, median, and percentiles at 1%, 10%, 25%, 50%,
+//       75%, 90%, and 99%).
 //     * A table of annual maxima for swh_offshore and swh_local, with a final row
 //       indicating the overall maximum values.
 //
@@ -43,9 +43,14 @@
 //     L              : Local wavelength, solved via Newton-Raphson from
 //                      L = L0 * tanh((2π * depth_d) / L)
 //     kh             : Product of the wave number (k = 2π / L) and local depth (h)
-//     alpha_offshore : Offshore wave approach angle relative to the coastline
-//     alpha_local    : Local wave angle after refraction
-//     mwd_local      : Local mean wave direction, adjusted from the offshore mwd
+//     alpha_offshore : Signed offshore wave obliquity (crest-to-coast difference),
+//                      computed by considering whether the wave approaches from
+//                      the "front" (mwd - 90°) or "back" (mwd + 90°) relative to the
+//                      coastline.
+//     alpha_local    : Local wave angle after refraction, computed from the offshore
+//                      obliquity and the refractive factor (tanhl(kh)).
+//     mwd_local      : Local mean wave direction, obtained by adjusting the offshore
+//                      mwd with the difference between alpha_offshore and alpha_local.
 //     Ks             : Shoaling coefficient
 //     Kr             : Refraction coefficient
 //     Hb             : Breaking wave height (per Miche, 1944), computed as
@@ -121,18 +126,34 @@ inline long double rad2deg(long double rad)
 }
 
 // --------------------------------------------------------------------
-// Calculate offshore obliquity (alpha_offshore in degrees).
+// Calculate signed offshore obliquity (alpha_offshore in degrees).
+//
+// For a given offshore mean wave direction (mwd_deg) and a coastline
+// direction (coast_deg), we choose whether to compute the crest as 
+// mwd-90 or mwd+90 depending on the relative orientation. The returned
+// value is the signed difference (in degrees) between the wave crest 
+// and the coastline direction. This sign is later used to adjust the 
+// rotation due to refraction.
 // --------------------------------------------------------------------
-long double calcalpha_offshore_deg(long double mwd_deg, long double coast_deg)
+long double calcAlphaOffshoreSigned(long double mwd_deg, long double coast_deg)
 {
-    long double crest = mwd_deg - 90.0L;
-    crest = fmodl(crest + 360.0L, 360.0L); // normalize
-    long double diff = fabsl(crest - coast_deg);
-    diff = fmodl(diff, 360.0L);
-    if (diff > 180.0L)
-        diff = 360.0L - diff;
-    if (diff > 90.0L)
-        diff = 180.0L - diff;
+    // Compute relative direction of the offshore wave (0-360)
+    long double relativeDir = fmodl((mwd_deg - coast_deg) + 360.0L, 360.0L);
+    // Decide which way to compute the crest: use mwd-90 if the wave is coming 
+    // from the "front" (relativeDir < 180) or mwd+90 if from behind.
+    long double crest;
+    if (relativeDir < 180.0L)
+        crest = mwd_deg - 90.0L;
+    else
+        crest = mwd_deg + 90.0L;
+    // Normalize crest to [0,360)
+    crest = fmodl(crest + 360.0L, 360.0L);
+    // The signed obliquity is the difference between the crest and the coast.
+    long double diff = crest - coast_deg;
+    while (diff > 180.0L)
+        diff -= 360.0L;
+    while (diff < -180.0L)
+        diff += 360.0L;
     return diff;
 }
 
@@ -152,9 +173,9 @@ long double localWavelength(long double T, long double depth)
     if (T <= 0.0L || depth <= 0.0L)
         return 0.0L;
     const long double L0 = deepWaterLength(T);
-    long double k0 = (2.0L * PI * depth) / L0;
+    long double k0h = (2.0L * PI * depth) / L0;
     // Use an initial guess based on empirical formula
-    long double L = L0 * tanhl(sinhl(sqrt(k0))) / tanhl(T);
+    long double L = L0 * (sqrt(k0h) + (k0h * k0h) / (k0h + 4.0L));
     for (int i = 0; i < MAX_ITER; ++i)
     {
         long double x = (2.0L * PI * depth) / L;
@@ -342,7 +363,7 @@ int main(int argc, char *argv[])
     getline(inFile, header);
     // Read remaining lines into a vector
     vector<string> lines;
-    string line;  // Declare the variable "line"
+    string line;
     while(getline(inFile, line)) {
         if (!line.empty())
             lines.push_back(line);
@@ -430,6 +451,7 @@ int main(int argc, char *argv[])
         else {
             long double relativeDir = fmodl((mwd - coast_dir) + 360.0L, 360.0L);
             if (relativeDir < 180.0L) {
+                // In this branch the waves are from the “wrong” side, so we leave swh_local as 0.
                 long double swh_local = 0.0L;
                 oss << datetime << "," << swh << "," << mwd << "," << pp1d;
                 for (int j = 0; j < 9; j++)
@@ -446,14 +468,16 @@ int main(int argc, char *argv[])
                 long double L = localWavelength(pp1d, depth_d);
                 long double kLocal = (L > 1e-12L) ? (2.0L * PI / L) : 0.0L;
                 long double kh = kLocal * depth_d;
-                long double alpha_offshore_deg = calcalpha_offshore_deg(mwd, coast_dir);
-                long double alpha_offshore_rad = deg2rad(alpha_offshore_deg);
+                // Use the new signed calculation for offshore obliquity.
+                long double alpha_offshore = calcAlphaOffshoreSigned(mwd, coast_dir);
+                long double alpha_offshore_rad = deg2rad(alpha_offshore);
                 long double sinAlpha = sinl(alpha_offshore_rad) * tanhl(kh);
                 if (fabsl(sinAlpha) > 1.0L)
                     sinAlpha = (sinAlpha > 0.0L ? 1.0L : -1.0L);
                 long double alpha_local_rad = asinl(sinAlpha);
-                long double alpha_local_deg = rad2deg(alpha_local_rad);
-                long double mwd_local = fmodl(mwd - (alpha_offshore_deg - alpha_local_deg) + 360.0L, 360.0L);
+                long double alpha_local = rad2deg(alpha_local_rad);
+                // Now adjust the offshore mwd by the change in crest obliquity.
+                long double mwd_local = fmodl(mwd - (alpha_offshore - alpha_local) + 360.0L, 360.0L);
                 long double Ks = shoalingCoefficient(kLocal, depth_d);
                 long double cosalpha_offshore = cosl(alpha_offshore_rad);
                 long double cosAlphaLocal = cosl(alpha_local_rad);
@@ -464,11 +488,11 @@ int main(int argc, char *argv[])
                     swh_local = Hb;
                 oss << datetime << "," << swh << "," << mwd << "," << pp1d << ","
                     << L0 << "," << L << "," << kh << ","
-                    << alpha_offshore_deg << "," << alpha_local_deg << ","
+                    << alpha_offshore << "," << alpha_local << ","
                     << swh_local << "," << mwd_local << ","
                     << Ks << "," << Kr << "," << Hb;
-                record = {swh, mwd, pp1d, L0, L, kh, alpha_offshore_deg,
-                          alpha_local_deg, swh_local, mwd_local, Ks, Kr, Hb};
+                record = {swh, mwd, pp1d, L0, L, kh, alpha_offshore,
+                          alpha_local, swh_local, mwd_local, Ks, Kr, Hb};
                 if (updateMaps) {
                     string year = datetime.substr(0, 4);
                     localAnnualMaxOffshore[tid][year] = max(localAnnualMaxOffshore[tid][year], swh);
