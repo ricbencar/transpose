@@ -8,6 +8,7 @@ This program processes wave data from an input CSV file, computes nearshore wave
 - **`output.csv`** – Contains the computed results.
 - **`report.txt`** – Provides descriptive statistics of both input and computed variables.
 ![transpose](https://github.com/user-attachments/assets/a35535ce-8a86-4ced-97ad-054a874e92ff)
+
 The report includes:
 - The command line used to invoke the program.
 - Descriptive statistics for each variable (count, mean, standard deviation, minimum, maximum, median, and percentiles at 1%, 10%, 25%, 50%, 75%, 90%, and 99%).
@@ -68,16 +69,6 @@ datetime,swh_offshore,mwd_offshore,pp1d,L0,L,kh,alpha_offshore,alpha_local,swh_l
 | **swh_local** | Local significant wave height (minimum of `swh * Ks * Kr` and `Hb`) |
 
 **Note:** Waves arriving from directions between `coast_dir` and `coast_dir + 180°` (i.e., from the land side) are set to **zero**.
-
----
-
-## Report File Details
-
-The report.txt file provides:
-
-- A descriptive statistics report for each output variable with additional percentiles at 1%, 10%, 25%, 50% (median), 75%, 90%, and 99%.
-- A table displaying the annual maxima for swh_offshore and swh_local, with the final row indicating the overall maximum for each variable.
-The command line used to run the program at the top of the report.
 
 ---
 
