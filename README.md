@@ -8,6 +8,7 @@ This program processes wave data from an input CSV file, computes nearshore wave
 - **`output.csv`** – Contains the computed results.
 - **`report.txt`** – Provides descriptive statistics of both input and computed variables.
 ![transpose](https://github.com/user-attachments/assets/a35535ce-8a86-4ced-97ad-054a874e92ff)
+---
 ## Results
 The report includes:
 - The command line used to invoke the program.
@@ -20,7 +21,7 @@ For directional wave data (`mwd_offshore` and `mwd_local`), a hybrid approach is
 
 ---
 
-## USAGE
+## Usage
 
 ```sh
 ./transpose input_csv coast_dir depth_d
@@ -33,7 +34,7 @@ For directional wave data (`mwd_offshore` and `mwd_local`), a hybrid approach is
 
 ---
 
-## CSV INPUT FORMAT
+## CSV Input Format
 
 The input CSV file should be comma-separated with at least the following columns:
 
@@ -43,7 +44,7 @@ datetime, swh, mwd, pp1d, [additional columns ignored]
 
 ---
 
-## OUTPUT CSV FORMAT
+## CSV Output Format
 
 The generated `output.csv` will contain the following comma-separated columns:
 
@@ -72,7 +73,7 @@ datetime,swh_offshore,mwd_offshore,pp1d,L0,L,kh,alpha_offshore,alpha_local,swh_l
 
 ---
 
-## COMPILATION
+## Compilation
 
 To compile the program, use the following command:
 
