@@ -9,6 +9,24 @@ This program processes wave data from an input CSV file, computes nearshore wave
 - **`report.txt`** – Provides descriptive statistics of both input and computed variables.
 ![transpose](https://github.com/user-attachments/assets/4e49cd6a-75bf-4e3d-9e5d-d905f913f08e)
 ---
+## Computed Parameters
+
+| Parameter         | Description |
+|------------------|-------------|
+| **L0** | Deep-water wavelength: `L0 = g * T² / (2π)` |
+| **L** | Local wavelength, solved from `L = L0 * tanh((2π * depth_d) / L)` |
+| **kh** | Wave number (`k = 2π / L`) times local depth (`h`) |
+| **alpha_offshore** | Offshore wave approach angle relative to coastline |
+| **alpha_local** | Local wave angle after refraction |
+| **mwd_local** | Local mean wave direction, adjusted from offshore `mwd` |
+| **Ks** | Shoaling coefficient |
+| **Kr** | Refraction coefficient |
+| **Hb** | Breaking wave height (Miche, 1944): `Hb = 0.142 * L * tanh((2π * depth_d) / L)` |
+| **swh_local** | Local significant wave height (minimum of `swh * Ks * Kr` and `Hb`) |
+
+**Note:** Waves arriving from directions between `coast_dir` and `coast_dir + 180°` (i.e., from the land side) are set to **zero**.
+
+---
 ## Results
 The report includes:
 - The command line used to invoke the program.
@@ -51,25 +69,6 @@ The generated `output.csv` will contain the following comma-separated columns:
 ```csv
 datetime,swh_offshore,mwd_offshore,pp1d,L0,L,kh,alpha_offshore,alpha_local,swh_local,mwd_local,Ks,Kr,Hb
 ```
-
----
-
-## Computed Parameters
-
-| Parameter         | Description |
-|------------------|-------------|
-| **L0** | Deep-water wavelength: `L0 = g * T² / (2π)` |
-| **L** | Local wavelength, solved from `L = L0 * tanh((2π * depth_d) / L)` |
-| **kh** | Wave number (`k = 2π / L`) times local depth (`h`) |
-| **alpha_offshore** | Offshore wave approach angle relative to coastline |
-| **alpha_local** | Local wave angle after refraction |
-| **mwd_local** | Local mean wave direction, adjusted from offshore `mwd` |
-| **Ks** | Shoaling coefficient |
-| **Kr** | Refraction coefficient |
-| **Hb** | Breaking wave height (Miche, 1944): `Hb = 0.142 * L * tanh((2π * depth_d) / L)` |
-| **swh_local** | Local significant wave height (minimum of `swh * Ks * Kr` and `Hb`) |
-
-**Note:** Waves arriving from directions between `coast_dir` and `coast_dir + 180°` (i.e., from the land side) are set to **zero**.
 
 ---
 
