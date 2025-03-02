@@ -24,6 +24,7 @@ This program processes wave data from an input CSV file, computes nearshore wave
 | **Hb** | Breaking wave height (Miche, 1944): `Hb = 0.142 * L * tanh((2π * depth_d) / L)` |
 | **swh_local** | Local significant wave height (minimum of `swh * Ks * Kr` and `Hb`) |
 
+
 **Note:** Waves arriving from directions between `coast_dir` and `coast_dir + 180°` (i.e., from the land side) are set to **zero**.
 
 ---
