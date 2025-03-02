@@ -75,8 +75,8 @@ datetime,swh_offshore,mwd_offshore,pp1d,L0,L,kh,alpha_offshore,alpha_local,swh_l
 
 The report.txt file provides:
 
-- **A descriptive statistics report for each output variable with additional percentiles at 1%, 10%, 25%, 50% (median), 75%, 90%, and 99%.
-- **A table displaying the annual maxima for swh_offshore and swh_local, with the final row indicating the overall maximum for each variable.
+- A descriptive statistics report for each output variable with additional percentiles at 1%, 10%, 25%, 50% (median), 75%, 90%, and 99%.
+- A table displaying the annual maxima for swh_offshore and swh_local, with the final row indicating the overall maximum for each variable.
 The command line used to run the program at the top of the report.
 
 ---
