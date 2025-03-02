@@ -8,7 +8,7 @@ This program processes wave data from an input CSV file, computes nearshore wave
 - **`output.csv`** – Contains the computed results.
 - **`report.txt`** – Provides descriptive statistics of both input and computed variables.
 ![transpose](https://github.com/user-attachments/assets/a35535ce-8a86-4ced-97ad-054a874e92ff)
-
+## Results
 The report includes:
 - The command line used to invoke the program.
 - Descriptive statistics for each variable (count, mean, standard deviation, minimum, maximum, median, and percentiles at 1%, 10%, 25%, 50%, 75%, 90%, and 99%).
