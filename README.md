@@ -15,7 +15,7 @@ This program processes wave data from an input CSV file, computes nearshore wave
 |------------------|-------------|
 | **L0** | Deep-water wavelength: `L0 = g * T² / (2π)` |
 | **L** | Local wavelength, solved from `L = L0 * tanh((2π * depth_d) / L)` |
-| **kh** | Wave number (`k = 2π / L`) times local depth (`h`) |
+| **kh** | Wave number (`k = 2π / L`) times local depth (`depth_d`) |
 | **alpha_offshore** | Offshore wave approach angle relative to coastline |
 | **alpha_local** | Local wave angle after refraction |
 | **mwd_local** | Local mean wave direction, adjusted from offshore `mwd` |
