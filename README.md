@@ -1,6 +1,4 @@
 # OFFSHORE-TO-NEARSHORE WAVE TRANSFORMATION
-*(Enhanced Approach Incorporating Wave Obliquity and Refraction)*
-
 ## Overview
 
 This program processes wave data from an input CSV file, computes nearshore wave parameters at a specified depth using linear wave theory enhanced with refraction and shoaling effects, and generates:
