@@ -197,8 +197,7 @@ long double localWavelength(long double T, long double depth)
 
     // --- New initial guess based on user formula for kh_approx ---
     // kh_approx ≈ tanh((6/5)^k0h * sqrt(k0h))
-    long double kh_approx_term = powl(6.0L / 5.0L, k0h) * sqrtl(k0h);
-    long double kh_approx = tanhl(kh_approx_term);
+    long double kh_approx = k0h / tanhl(powl(6.0L / 5.0L, k0h) * sqrtl(k0h));
 
     if (kh_approx > TOLERANCE) {
         // If kh = kh_approx, then L = 2*pi / k = 2*pi*depth / kh_approx
