@@ -90,7 +90,7 @@ datetime,swh_offshore,mwd_offshore,pp1d,L0,L,kh,alpha_offshore,alpha_local,swh_l
 To compile the program, use the following command:
 
 ```sh
-g++ -O3 -fopenmp -march=native -std=c++17 -Wall -Wextra -pedantic -Wconversion -Wsign-conversion -static -static-libgcc -static-libstdc++ -o transpose transpose.cpp
+g++ -O3 -fopenmp -march=native -std=c++17 -Wall -Wextra -pedantic -Wconversion -Wsign-conversion -static -static-libgcc -static-libstdc++ -lm -o transpose transpose.cpp
 ```
 
 This command enables **optimizations** and includes several **compiler warnings** to ensure code quality.
